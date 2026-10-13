@@ -1015,6 +1015,18 @@ impl fmt::Debug for CommandEncoder {
     }
 }
 
+impl CommandEncoder {
+    /// The command list being recorded, between `begin_encoding` and `end_encoding`.
+    ///
+    /// # Safety
+    ///
+    /// - The command list must not be closed, reset or manually released
+    /// - Commands recorded through it must leave the list in a state the encoder's later commands expect
+    pub unsafe fn raw_handle(&self) -> Option<&Direct3D12::ID3D12GraphicsCommandList> {
+        self.list.as_ref()
+    }
+}
+
 #[derive(Debug)]
 pub struct CommandBuffer {
     raw: Direct3D12::ID3D12GraphicsCommandList,
