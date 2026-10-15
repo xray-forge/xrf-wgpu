@@ -934,7 +934,10 @@ fn iter_blas<'snatch_guard: 'buffers, 'buffers>(
                 {
                     let scratch_buffer_offset = *scratch_buffer_blas_size;
                     *scratch_buffer_blas_size = scratch_buffer_blas_size.saturating_add(align_to(
-                        blas.size_info.build_scratch_size,
+                        max(
+                            blas.size_info.build_scratch_size,
+                            blas.size_info.update_scratch_size,
+                        ),
                         u64::from(state.device.alignments.ray_tracing_scratch_buffer_alignment),
                     ));
 
@@ -1063,7 +1066,10 @@ fn iter_blas<'snatch_guard: 'buffers, 'buffers>(
                 {
                     let scratch_buffer_offset = *scratch_buffer_blas_size;
                     *scratch_buffer_blas_size = scratch_buffer_blas_size.saturating_add(align_to(
-                        blas.size_info.build_scratch_size,
+                        max(
+                            blas.size_info.build_scratch_size,
+                            blas.size_info.update_scratch_size,
+                        ),
                         u64::from(state.device.alignments.ray_tracing_scratch_buffer_alignment),
                     ));
 
@@ -1100,10 +1106,14 @@ fn map_blas<'a>(
         entries,
         scratch_buffer_offset,
     } = storage;
-    if blas.update_mode == wgt::AccelerationStructureUpdateMode::PreferUpdate {
-        log::debug!("only rebuild implemented")
-    }
     let raw = blas.try_raw(snatch_guard)?;
+    // A BLAS created to allow updates that asks for them is refit in place once it holds a build:
+    // only its vertices may differ, which the size validation against its creation already keeps.
+    let is_update = blas.update_mode == wgt::AccelerationStructureUpdateMode::PreferUpdate
+        && blas
+            .flags
+            .contains(wgt::AccelerationStructureFlags::ALLOW_UPDATE)
+        && blas.built_index.read().is_some();
 
     let state_lock = blas.compacted_state.lock();
     if let BlasCompactState::Compacted = *state_lock {
@@ -1120,9 +1130,13 @@ fn map_blas<'a>(
     }
     Ok(hal::BuildAccelerationStructureDescriptor {
         entries,
-        mode: hal::AccelerationStructureBuildMode::Build,
+        mode: if is_update {
+            hal::AccelerationStructureBuildMode::Update
+        } else {
+            hal::AccelerationStructureBuildMode::Build
+        },
         flags: blas.flags,
-        source_acceleration_structure: None,
+        source_acceleration_structure: is_update.then_some(raw),
         destination_acceleration_structure: raw,
         scratch_buffer,
         scratch_buffer_offset: *scratch_buffer_offset,
