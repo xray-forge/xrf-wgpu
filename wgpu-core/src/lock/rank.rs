@@ -122,6 +122,7 @@ define_lock_ranks! {
         QUEUE_PENDING_WRITES,
         TEXTURE_INITIALIZATION_STATUS,
         QUEUE_LIFE_TRACKER,
+        BLAS_BUILT_SHAPE,
         BLAS_COMPACTION_STATE,
         BUFFER_BIND_GROUPS,
         BUFFER_INITIALIZATION_STATUS,
@@ -196,6 +197,7 @@ define_lock_ranks! {
     }
 
     // Leaf ranks reachable from the graph above, alphabetical.
+    rank BLAS_BUILT_SHAPE "Blas::built_shape" followed by { }
     rank BLAS_COMPACTION_STATE "Blas::compaction_state" followed by { }
     rank BUFFER_BIND_GROUPS "Buffer::bind_groups" followed by { }
     rank BUFFER_INITIALIZATION_STATUS "Buffer::initialization_status" followed by { }

@@ -24,7 +24,7 @@ use crate::{
         ArcTlasInstance, ArcTlasPackage, BlasBuildEntry, BlasGeometries,
         BuildAccelerationStructureError, OwnedBlasBuildEntry, OwnedTlasPackage, TlasPackage,
     },
-    resource::{Blas, BlasCompactState, Labeled, StagingBuffer, Tlas},
+    resource::{Blas, BlasBuildShape, BlasCompactState, Labeled, StagingBuffer, Tlas},
     scratch::ScratchBuffer,
     snatch::SnatchGuard,
 };
@@ -1110,13 +1110,20 @@ fn map_blas<'a>(
         scratch_buffer_offset,
     } = storage;
     let raw = blas.try_raw(snatch_guard)?;
-    // A BLAS created to allow updates that asks for them is refit in place once it holds a build:
-    // only its vertices may differ, which the size validation against its creation already keeps.
+    // A BLAS created to allow updates that asks for them is refit in place once it holds a build laid out
+    // exactly as this one: Vulkan and D3D12 refit only the same geometries, counts and formats, which the
+    // size validation against its creation does not keep, as it lets a build hold fewer of each.
+    let shape = to_build_shape(entries);
+    let mut built_shape = blas.built_shape.lock();
     let is_update = blas.update_mode == wgt::AccelerationStructureUpdateMode::PreferUpdate
         && blas
             .flags
             .contains(wgt::AccelerationStructureFlags::ALLOW_UPDATE)
-        && blas.built_index.read().is_some();
+        && blas.built_index.read().is_some()
+        && built_shape.as_ref() == shape.as_ref();
+
+    *built_shape = shape;
+    drop(built_shape);
 
     let state_lock = blas.compacted_state.lock();
     if let BlasCompactState::Compacted = *state_lock {
@@ -1144,6 +1151,41 @@ fn map_blas<'a>(
         scratch_buffer,
         scratch_buffer_offset: *scratch_buffer_offset,
     })
+}
+
+/// How the entries of a BLAS build lay out its geometry, which a refit has to repeat; none for instances, which only a
+/// TLAS builds from.
+fn to_build_shape(
+    entries: &hal::AccelerationStructureEntries<'_, dyn hal::DynBuffer>,
+) -> Option<BlasBuildShape> {
+    match entries {
+        hal::AccelerationStructureEntries::Instances(_) => None,
+        hal::AccelerationStructureEntries::Triangles(triangles) => Some(BlasBuildShape::Triangles(
+            triangles
+                .iter()
+                .map(|triangle| {
+                    (
+                        triangle.vertex_format,
+                        triangle.first_vertex,
+                        triangle.vertex_count,
+                        triangle.vertex_stride,
+                        triangle
+                            .indices
+                            .as_ref()
+                            .map(|indices| (indices.format, indices.count)),
+                        triangle.transform.is_some(),
+                        triangle.flags.bits(),
+                    )
+                })
+                .collect(),
+        )),
+        hal::AccelerationStructureEntries::AABBs(boxes) => Some(BlasBuildShape::Aabbs(
+            boxes
+                .iter()
+                .map(|aabb| (aabb.count, aabb.stride, aabb.flags.bits()))
+                .collect(),
+        )),
+    }
 }
 
 fn build_blas<'a>(
