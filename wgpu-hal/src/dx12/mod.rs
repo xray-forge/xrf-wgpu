@@ -1020,8 +1020,17 @@ impl CommandEncoder {
     ///
     /// # Safety
     ///
-    /// - The command list must not be closed, reset or manually released
-    /// - Commands recorded through it must leave the list in a state the encoder's later commands expect
+    /// - The command list must not be closed, reset or manually released, and neither it nor a clone of it
+    ///   may be used after `end_encoding`.
+    /// - No render or compute pass may be open while it is used: a pass sets its descriptor heaps and root
+    ///   state as it begins (`begin_pass`) and clears the heaps as it ends, so a command recorded inside one
+    ///   would change state the pass relies on.
+    /// - Every resource wgpu tracks that its commands touch must be left in the state wgpu believes it is in,
+    ///   with no barrier of its own left for wgpu to undo.
+    ///
+    /// A caller recording into an encoder it uses for nothing else meets all three by construction.
+    /// `as_hal_mut` marks the encoder raw, after which wgpu refuses its own commands on it: the two APIs
+    /// never mix on one encoder.
     pub unsafe fn raw_handle(&self) -> Option<&Direct3D12::ID3D12GraphicsCommandList> {
         self.list.as_ref()
     }
