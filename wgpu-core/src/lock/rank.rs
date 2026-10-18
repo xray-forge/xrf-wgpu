@@ -143,6 +143,7 @@ define_lock_ranks! {
         QUEUE_PENDING_WRITES,
         DEVICE_TRACKERS,
         QUEUE_LIFE_TRACKER,
+        BLAS_BUILT_SHAPE,
         BLAS_COMPACTION_STATE,
         COMMAND_ALLOCATOR_FREE_ENCODERS,
         BUFFER_BIND_GROUPS,
@@ -236,6 +237,7 @@ define_lock_ranks! {
 
     // Leaf ranks reachable from the graph above, alphabetical.
     rank BLAS_BUILT_INDEX "Blas::built_index" followed by { }
+    rank BLAS_BUILT_SHAPE "Blas::built_shape" followed by { }
     rank BUFFER_BIND_GROUPS "Buffer::bind_groups" followed by { }
     rank BUFFER_INITIALIZATION_STATUS "Buffer::initialization_status" followed by { }
     rank BUFFER_POOL "BufferPool::buffers" followed by { }

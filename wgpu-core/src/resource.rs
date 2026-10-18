@@ -3441,12 +3441,36 @@ pub struct Blas {
     pub(crate) flags: wgt::AccelerationStructureFlags,
     pub(crate) update_mode: wgt::AccelerationStructureUpdateMode,
     pub(crate) built_index: RwLock<Option<NonZeroU64>>,
+    /// What its last build was laid out as, which a refit has to repeat exactly.
+    pub(crate) built_shape: Mutex<Option<BlasBuildShape>>,
     pub(crate) handle: u64,
     /// The `label` from the descriptor used to create the resource.
     pub(crate) label: String,
     pub(crate) tracking_data: TrackingData,
     pub(crate) compaction_buffer: Option<ManuallyDrop<Box<dyn hal::DynBuffer>>>,
     pub(crate) compacted_state: Mutex<BlasCompactState>,
+}
+
+/// How a build of a BLAS lays out its geometry: what Vulkan and D3D12 require an update to repeat from the build it
+/// refits (each geometry's counts, formats, first vertex, transform and flags), while its buffers and their contents may
+/// move.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BlasBuildShape {
+    /// Each geometry's vertex format, first vertex, vertex count and stride, its index format and count, whether it is
+    /// transformed, and its flags.
+    Triangles(
+        Vec<(
+            wgt::VertexFormat,
+            u32,
+            u32,
+            wgt::BufferAddress,
+            Option<(wgt::IndexFormat, u32)>,
+            bool,
+            u8,
+        )>,
+    ),
+    /// Each geometry's box count, stride and flags.
+    Aabbs(Vec<(u32, wgt::BufferAddress, u8)>),
 }
 
 impl Drop for Blas {
@@ -3512,6 +3536,7 @@ impl Blas {
             flags: desc.flags,
             update_mode: desc.update_mode,
             built_index: RwLock::new(rank::BLAS_BUILT_INDEX, None),
+            built_shape: Mutex::new(rank::BLAS_BUILT_SHAPE, None),
             handle: 0,
             label: desc.label.to_string(),
             tracking_data: TrackingData::new(device.tracker_indices.blas_s.clone()),

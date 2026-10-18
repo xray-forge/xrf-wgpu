@@ -25,6 +25,7 @@ pub fn all_tests(tests: &mut Vec<GpuTestInitializer>) {
         MISALIGNED_BUILD,
         TOO_SMALL_STRIDE_BUILD,
         BLAS_FIRST_VERTEX,
+        BLAS_REFIT_SHRUNK,
     ]);
 }
 
@@ -908,4 +909,76 @@ fn blas_first_vertex(ctx: TestingContext) {
     encoder.build_acceleration_structures([&entry], []);
 
     ctx.queue.submit([encoder.finish()]);
+}
+
+#[gpu_test]
+static BLAS_REFIT_SHRUNK: GpuTestConfiguration = GpuTestConfiguration::new()
+    .parameters(
+        TestParameters::default()
+            .test_features_limits()
+            .limits(acceleration_structure_limits())
+            .features(wgpu::Features::EXPERIMENTAL_RAY_QUERY),
+    )
+    .run_sync(blas_refit_shrunk);
+
+/// A BLAS that allows updates and asks for them refits a build laid out as its last one, and builds afresh one that
+/// holds fewer vertices, which the backends refuse to refit: the validation layers catch a refit of another layout.
+fn blas_refit_shrunk(ctx: TestingContext) {
+    let full = BlasTriangleGeometrySizeDescriptor {
+        vertex_format: VertexFormat::Float32x3,
+        vertex_count: 6,
+        index_format: None,
+        index_count: None,
+        flags: AccelerationStructureGeometryFlags::empty(),
+    };
+    let shrunk = BlasTriangleGeometrySizeDescriptor {
+        vertex_count: 3,
+        ..full.clone()
+    };
+
+    let blas = ctx.device.create_blas(
+        &CreateBlasDescriptor {
+            label: Some("BLAS"),
+            flags: AccelerationStructureFlags::PREFER_FAST_TRACE
+                | AccelerationStructureFlags::ALLOW_UPDATE,
+            update_mode: AccelerationStructureUpdateMode::PreferUpdate,
+        },
+        BlasGeometrySizeDescriptors::Triangles {
+            descriptors: vec![full.clone()],
+        },
+    );
+
+    let vertices = ctx.device.create_buffer_init(&BufferInitDescriptor {
+        label: None,
+        contents: &[0; size_of::<[[f32; 3]; 6]>()],
+        usage: BufferUsages::BLAS_INPUT,
+    });
+
+    // Built, refit, built afresh at fewer vertices, then refit at those.
+    for size in [&full, &full, &shrunk, &shrunk] {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        encoder.build_acceleration_structures(
+            [&BlasBuildEntry {
+                blas: &blas,
+                geometry: BlasGeometries::TriangleGeometries(vec![BlasTriangleGeometry {
+                    size,
+                    vertex_buffer: &vertices,
+                    first_vertex: 0,
+                    vertex_stride: size_of::<[f32; 3]>() as BufferAddress,
+                    index_buffer: None,
+                    first_index: None,
+                    transform_buffer: None,
+                    transform_buffer_offset: None,
+                }]),
+            }],
+            [],
+        );
+
+        ctx.queue.submit([encoder.finish()]);
+    }
+
+    ctx.device.poll(PollType::wait_indefinitely()).unwrap();
 }

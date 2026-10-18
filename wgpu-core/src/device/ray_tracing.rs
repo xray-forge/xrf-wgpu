@@ -230,6 +230,7 @@ impl Device {
             handle,
             label: blas_desc.label.to_string(),
             built_index: RwLock::new(rank::BLAS_BUILT_INDEX, None),
+            built_shape: Mutex::new(rank::BLAS_BUILT_SHAPE, None),
             tracking_data: TrackingData::new(self.tracker_indices.blas_s.clone()),
             compaction_buffer,
             compacted_state: Mutex::new(rank::BLAS_COMPACTION_STATE, BlasCompactState::Idle),

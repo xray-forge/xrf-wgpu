@@ -2096,6 +2096,7 @@ impl Queue {
             update_mode: blas.update_mode,
             // Bypass the submit checks which update this because we don't submit this normally.
             built_index: RwLock::new(rank::BLAS_BUILT_INDEX, Some(built_index)),
+            built_shape: Mutex::new(rank::BLAS_BUILT_SHAPE, None),
             handle,
             label: new_label,
             tracking_data: TrackingData::new(blas.device.tracker_indices.blas_s.clone()),
