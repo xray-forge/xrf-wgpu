@@ -1230,14 +1230,19 @@ impl BlockContext<'_> {
                     size: vec_size,
                     scalar: crate::Scalar::U32,
                 });
+                // `OpImageQuerySizeLod` takes only sampled, single-sample images, as for `Size`.
+                let query_op = match class {
+                    Ic::Sampled { multi: true, .. }
+                    | Ic::Depth { multi: true }
+                    | Ic::Storage { .. } => spirv::Op::ImageQuerySize,
+                    _ => spirv::Op::ImageQuerySizeLod,
+                };
                 let id_extended = self.gen_id();
-                let mut inst = Instruction::image_query(
-                    spirv::Op::ImageQuerySizeLod,
-                    extended_size_type_id,
-                    id_extended,
-                    image_id,
-                );
-                inst.add_operand(self.get_index_constant(0));
+                let mut inst =
+                    Instruction::image_query(query_op, extended_size_type_id, id_extended, image_id);
+                if query_op == spirv::Op::ImageQuerySizeLod {
+                    inst.add_operand(self.get_index_constant(0));
+                }
                 block.body.push(inst);
 
                 let extract_id = self.gen_id();
