@@ -10,7 +10,7 @@ use ordered_float::OrderedFloat;
 use wgpu_sync::Mutex;
 use windows::Win32::Graphics::Direct3D12::*;
 
-use crate::dx12::HResult;
+use crate::dx12::{descriptor::DescriptorHeap, HResult};
 
 /// The index of a sampler in the global sampler heap.
 ///
@@ -84,7 +84,7 @@ pub(crate) struct SamplerHeap {
     state: Mutex<SamplerHeapState>,
 
     /// The heap itself.
-    heap: ID3D12DescriptorHeap,
+    heap: DescriptorHeap,
     /// The CPU-side handle to the first descriptor in the heap.
     ///
     /// Both the CPU and GPU handles point to the same descriptor, just in
@@ -120,7 +120,7 @@ impl SamplerHeap {
             Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
             NodeMask: 0,
         };
-        let heap = unsafe { device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&desc) }
+        let heap = DescriptorHeap::new(device, &desc)
             .into_device_result("Failed to create global GPU-Visible Sampler Descriptor Heap")?;
 
         let heap_cpu_start_handle = unsafe { heap.GetCPUDescriptorHandleForHeapStart() };

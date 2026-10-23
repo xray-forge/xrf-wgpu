@@ -1,14 +1,68 @@
 use alloc::vec::Vec;
-use core::fmt;
+use core::{fmt, mem::ManuallyDrop, ops::Deref};
 
 use bit_set::BitSet;
 use range_alloc::RangeAllocator;
-use wgpu_sync::Mutex;
+use wgpu_sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, RwLock,
+};
 use windows::Win32::Graphics::Direct3D12;
 
 use crate::auxil::dxgi::result::HResult as _;
 
 const HEAP_SIZE_FIXED: usize = 64;
+
+/// Whether each descriptor heap release excludes every other heap creation and release,
+/// process-wide.
+///
+/// The D3D12 debug layer loses track of a descriptor heap created while another thread releases
+/// one, then rejects views written into the new heap with the unhandled exception `0x87D`
+/// ("Specified CPU descriptor handle ... does not refer to a location in a descriptor heap").
+/// Concurrent creations alone are safe, so they share the lock. `D3D12CreateDevice` returns the
+/// adapter's existing device, so separate wgpu devices race as well, and the lock is global. It
+/// guards only the D3D12 call and takes no other lock.
+static SERIALIZE_HEAP_RELEASES: AtomicBool = AtomicBool::new(false);
+static HEAP_LIFETIME_LOCK: RwLock<()> = RwLock::new(());
+
+/// Serializes descriptor heap releases from now on. Called when the debug layer is enabled.
+pub(super) fn serialize_heap_releases() {
+    SERIALIZE_HEAP_RELEASES.store(true, Ordering::Relaxed);
+}
+
+fn is_serializing_heap_releases() -> bool {
+    SERIALIZE_HEAP_RELEASES.load(Ordering::Relaxed)
+}
+
+/// A descriptor heap created under the shared heap lifetime lock and released under the exclusive
+/// one while the debug layer is on.
+pub(super) struct DescriptorHeap(ManuallyDrop<Direct3D12::ID3D12DescriptorHeap>);
+
+impl DescriptorHeap {
+    pub(super) fn new(
+        device: &Direct3D12::ID3D12Device,
+        desc: &Direct3D12::D3D12_DESCRIPTOR_HEAP_DESC,
+    ) -> windows::core::Result<Self> {
+        let _creating = is_serializing_heap_releases().then(|| HEAP_LIFETIME_LOCK.read());
+        unsafe { device.CreateDescriptorHeap::<Direct3D12::ID3D12DescriptorHeap>(desc) }
+            .map(|heap| Self(ManuallyDrop::new(heap)))
+    }
+}
+
+impl Deref for DescriptorHeap {
+    type Target = Direct3D12::ID3D12DescriptorHeap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for DescriptorHeap {
+    fn drop(&mut self) {
+        let _releasing = is_serializing_heap_releases().then(|| HEAP_LIFETIME_LOCK.write());
+        unsafe { ManuallyDrop::drop(&mut self.0) };
+    }
+}
 
 #[derive(Copy, Clone)]
 pub(super) struct DualHandle {
@@ -31,7 +85,7 @@ impl fmt::Debug for DualHandle {
 type DescriptorIndex = u64;
 
 pub(super) struct GeneralHeap {
-    pub raw: Direct3D12::ID3D12DescriptorHeap,
+    pub raw: DescriptorHeap,
     ty: Direct3D12::D3D12_DESCRIPTOR_HEAP_TYPE,
     handle_size: u64,
     total_handles: u64,
@@ -53,8 +107,7 @@ impl GeneralHeap {
                 Flags: Direct3D12::D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
                 NodeMask: 0,
             };
-            unsafe { device.CreateDescriptorHeap::<Direct3D12::ID3D12DescriptorHeap>(&desc) }
-                .into_device_result("Descriptor heap creation")?
+            DescriptorHeap::new(device, &desc).into_device_result("Descriptor heap creation")?
         };
 
         let start = DualHandle {
@@ -112,7 +165,7 @@ impl GeneralHeap {
 
 /// Fixed-size free-list allocator for CPU descriptors.
 struct FixedSizeHeap {
-    _raw: Direct3D12::ID3D12DescriptorHeap,
+    _raw: DescriptorHeap,
     /// Bit flag representation of available handles in the heap.
     ///
     ///  0 - Occupied
@@ -134,8 +187,7 @@ impl FixedSizeHeap {
             NodeMask: 0,
         };
         let heap =
-            unsafe { device.CreateDescriptorHeap::<Direct3D12::ID3D12DescriptorHeap>(&desc) }
-                .into_device_result("Descriptor heap creation")?;
+            DescriptorHeap::new(device, &desc).into_device_result("Descriptor heap creation")?;
 
         Ok(Self {
             handle_size: unsafe { device.GetDescriptorHandleIncrementSize(ty) } as usize,
@@ -241,7 +293,7 @@ impl CpuPool {
 }
 
 pub(super) struct CpuHeapInner {
-    pub _raw: Direct3D12::ID3D12DescriptorHeap,
+    pub _raw: DescriptorHeap,
     pub stage: Vec<Direct3D12::D3D12_CPU_DESCRIPTOR_HANDLE>,
 }
 
@@ -268,7 +320,7 @@ impl CpuHeap {
             Flags: Direct3D12::D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
             NodeMask: 0,
         };
-        let raw = unsafe { device.CreateDescriptorHeap::<Direct3D12::ID3D12DescriptorHeap>(&desc) }
+        let raw = DescriptorHeap::new(device, &desc)
             .into_device_result("CPU descriptor heap creation")?;
 
         let start = unsafe { raw.GetCPUDescriptorHandleForHeapStart() };

@@ -14,6 +14,7 @@ pub fn all_tests(vec: &mut Vec<GpuTestInitializer>) {
         BIND_GROUP_NONFILTERING_LAYOUT_MIPMAP_SAMPLER,
         BIND_GROUP_WITH_MAX_BINDING_INDEX,
         BIND_GROUP_STAGE_ORDER,
+        BIND_GROUP_LAYOUTS_CHURNED_ON_THREADS,
     ]);
 }
 
@@ -539,3 +540,70 @@ static BIND_GROUP_STAGE_ORDER: GpuTestConfiguration = GpuTestConfiguration::new(
             .features(wgpu::Features::EXPERIMENTAL_MESH_SHADER),
     )
     .run_async(bind_group_stage_order);
+
+/// Create and drop bind group layouts and bind groups on several threads at once.
+///
+/// On D3D12 each layout owns a CPU descriptor heap. The debug layer loses track of a heap created
+/// while another thread releases one, then raises an unhandled exception (0x87D) when a bind group
+/// writes a view into it.
+#[apply(gpu_test!)]
+static BIND_GROUP_LAYOUTS_CHURNED_ON_THREADS: GpuTestConfiguration = GpuTestConfiguration::new()
+    .parameters(
+        TestParameters::default()
+            .limits(wgpu::Limits::downlevel_defaults())
+            .enable_noop(),
+    )
+    .run_sync(|_ctx| {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            const THREADS: u32 = 8;
+
+            let ctx = _ctx;
+            let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("buffer"),
+                size: 256,
+                usage: BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let start = std::sync::Barrier::new(THREADS as usize);
+
+            std::thread::scope(|s| {
+                for thread in 0..THREADS {
+                    let device = &ctx.device;
+                    let buffer = &buffer;
+                    let start = &start;
+                    s.spawn(move || {
+                        start.wait();
+                        for _ in 0..500 {
+                            // A binding per thread keeps the layouts from being deduplicated across threads.
+                            let layout =
+                                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                                    label: None,
+                                    entries: &[wgpu::BindGroupLayoutEntry {
+                                        binding: thread,
+                                        visibility: wgpu::ShaderStages::COMPUTE,
+                                        ty: wgpu::BindingType::Buffer {
+                                            ty: wgpu::BufferBindingType::Storage {
+                                                read_only: false,
+                                            },
+                                            has_dynamic_offset: false,
+                                            min_binding_size: None,
+                                        },
+                                        count: None,
+                                    }],
+                                });
+                            let _bind_group =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: None,
+                                    layout: &layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: thread,
+                                        resource: buffer.as_entire_binding(),
+                                    }],
+                                });
+                        }
+                    });
+                }
+            });
+        }
+    });

@@ -126,6 +126,7 @@ impl DeviceFactory {
 
         if flags.intersects(wgt::InstanceFlags::VALIDATION) {
             unsafe { debug_controller.EnableDebugLayer() }
+            super::descriptor::serialize_heap_releases();
         }
         if flags.intersects(wgt::InstanceFlags::GPU_BASED_VALIDATION) {
             if let Ok(debug1) = debug_controller.cast::<Direct3D12::ID3D12Debug1>() {
