@@ -1111,12 +1111,14 @@ fn map_blas<'a>(
     // exactly as this one: Vulkan and D3D12 refit only the same geometries, counts and formats, which the
     // size validation against its creation does not keep, as it lets a build hold fewer of each.
     let shape = to_build_shape(entries);
+    // Both locks are leaves, so `built_index` is read before `built_shape` is taken.
+    let is_built = blas.built_index.read().is_some();
     let mut built_shape = blas.built_shape.lock();
     let is_update = blas.update_mode == wgt::AccelerationStructureUpdateMode::PreferUpdate
         && blas
             .flags
             .contains(wgt::AccelerationStructureFlags::ALLOW_UPDATE)
-        && blas.built_index.read().is_some()
+        && is_built
         && built_shape.as_ref() == shape.as_ref();
 
     *built_shape = shape;
