@@ -911,7 +911,7 @@ fn blas_first_vertex(ctx: TestingContext) {
     ctx.queue.submit([encoder.finish()]);
 }
 
-#[gpu_test]
+#[apply(gpu_test!)]
 static BLAS_REFIT_SHRUNK: GpuTestConfiguration = GpuTestConfiguration::new()
     .parameters(
         TestParameters::default()
